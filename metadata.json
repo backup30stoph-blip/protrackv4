@@ -1,0 +1,5 @@
+{
+  "name": "PROTRACK",
+  "description": "Industrial Production Tracking system for managing Export, Local, and Debardage operations with strict business logic and analytics.",
+  "requestFramePermissions": []
+}

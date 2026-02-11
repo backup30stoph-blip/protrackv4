@@ -13,39 +13,45 @@ export type PlatformType = 'BIG_BAG' | '50KG';
 export interface ProductionLog {
   id: string; // UUID
   created_at: string;
-  user_id?: string; // New: Ownership tracking
+  user_id?: string; 
   
   // Core Dimensions
   category: OperationCategory;
   shift: ShiftType;
   article_code: string;
-  platform: PlatformType; // Updated from platform_type
+  platform: PlatformType; 
   
   // Quantitative Metrics
   truck_count: number;
-  units_per_truck: number; // NEW: Sacs (50kg) or Columns (BB)
-  weight_per_unit: number; // Export = Variable, Others = 1.2
-  total_tonnage: number;   // Calculated
+  units_per_truck: number; 
+  weight_per_unit: number; 
+  total_tonnage: number;   
   
   // Optional Operational Data
   reste_count?: number;
   pallet_type?: PalletType;
   
-  // Logistics Data (Required for EXPORT, Null for others)
-  bl_number?: string;   // Bill of Lading
-  tc_number?: string;   // Container Number
-  seal_number?: string; // Plombe
+  // Logistics Data
+  bl_number?: string;   
+  tc_number?: string;   
+  seal_number?: string; 
   
-  // Extended Shipping Data (Export Program)
-  file_number?: string;    // N° Dossier
-  booking_ref?: string;    // Booking Reference
-  customer?: string;       // Client / CLTS
-  maritime_agent?: string; // Agent Maritime
-  destination?: string;    // Destination Port/Country
-  sap_code?: string;       // SAP Order Code
+  // Extended Shipping Data
+  file_number?: string;    
+  booking_ref?: string;    
+  customer?: string;       
+  maritime_agent?: string; 
+  destination?: string;    
+  sap_code?: string;       
 
   // Local Market Data
-  truck_matricul?: string; // Matricule Camion
+  truck_matricul?: string; 
+
+  // Multi-image support
+  images?: string[];
+  
+  // New: Field for observations/notes
+  comments?: string;
 }
 
 export interface ProductionLogInput extends Omit<ProductionLog, 'id' | 'created_at' | 'total_tonnage' | 'user_id'> {
@@ -62,7 +68,7 @@ export interface ShippingProgram {
   planned_count: number;
   planned_quantity: number;
   shipping_line: string;
-  start_date_raw: string; // Text format from CSV
+  start_date_raw: string; 
   deadline_raw: string;
   special_instructions: string;
   status: 'PENDING' | 'IN_PROGRESS' | 'COMPLETED';

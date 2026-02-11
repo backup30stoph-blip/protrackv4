@@ -250,9 +250,9 @@ interface ErrorBoundaryState {
   error: Error | null;
 }
 
-// Fixed ErrorBoundary by using explicit Component and ReactNode imports and property-based state
+// Fixed ErrorBoundary inheritance by using Component directly to ensure 'this.props' is correctly typed within the class instance
 class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  public override state: ErrorBoundaryState = {
+  public state: ErrorBoundaryState = {
     hasError: false,
     error: null
   };
@@ -261,7 +261,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
     return { hasError: true, error };
   }
 
-  public override render() {
+  public render() {
     if (this.state.hasError) {
       return (
         <div className="min-h-screen flex items-center justify-center bg-slate-50 p-8">
@@ -278,6 +278,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
         </div>
       );
     }
+    // Correctly accessing 'this.props' from the Component base class
     return this.props.children;
   }
 }

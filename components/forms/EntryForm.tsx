@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Save, Search, FileText, Package, ShieldCheck, Scale, Truck, MapPin, Hash, AlertCircle, RotateCcw, Layers, Box, X, Pencil, Ban, ArrowRight, Flame, AlertTriangle, Camera, MessageSquare
+  Save, Search, FileText, Package, ShieldCheck, Scale, Truck, MapPin, Hash, AlertCircle, RotateCcw, Layers, Box, X, Pencil, Ban, ArrowRight, Flame, AlertTriangle, Camera, MessageSquare, CheckCircle2
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase.ts';
 import { ProductionLogInput, PlatformType, ProductionLog, ShiftType } from '../../types.ts';
@@ -29,7 +29,17 @@ const LOW_STOCK_THRESHOLD = 5;
 export const EntryForm: React.FC<EntryFormProps> = ({ onSuccess, initialData, onCancel, platform }) => {
   const { fullName, platformAssignment, userRole } = useAuth();
   const [loading, setLoading] = useState(false);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  
+  // Notification State
+  const [notification, setNotification] = useState<{
+    message: string;
+    type: 'success' | 'error';
+    isVisible: boolean;
+  }>({
+    message: '',
+    type: 'success',
+    isVisible: false
+  });
   
   const [dossierAlert, setDossierAlert] = useState<string | null>(null);
   const [crossPlatformError, setCrossPlatformError] = useState<string | null>(null);
@@ -58,6 +68,15 @@ export const EntryForm: React.FC<EntryFormProps> = ({ onSuccess, initialData, on
     images: [],
     comments: ''
   });
+
+  // Function to show notification
+  const showNotification = (message: string, type: 'success' | 'error') => {
+    setNotification({ message, type, isVisible: true });
+    // Auto-hide after 4 seconds
+    setTimeout(() => {
+      setNotification(prev => ({ ...prev, isVisible: false }));
+    }, 4000);
+  };
 
   // Populate form when editing
   useEffect(() => {
@@ -182,7 +201,7 @@ export const EntryForm: React.FC<EntryFormProps> = ({ onSuccess, initialData, on
               return;
            }
         }
-        alert(`Dossier "${searchTerm}" not found.`);
+        showNotification(`Dossier "${searchTerm}" not found.`, 'error');
         setIsSearching(false);
         return;
       }
@@ -197,7 +216,6 @@ export const EntryForm: React.FC<EntryFormProps> = ({ onSuccess, initialData, on
         destination: program.destination || '',
         sap_code: program.sap_order_code || '',
         reste_count: stock,
-        // Populate comments with special instructions if current comments are empty
         comments: prev.comments || program.special_instructions || ''
       }));
 
@@ -206,6 +224,7 @@ export const EntryForm: React.FC<EntryFormProps> = ({ onSuccess, initialData, on
       }
     } catch (err: any) {
       console.error(err);
+      showNotification('Dossier lookup failed.', 'error');
     } finally {
       setIsSearching(false);
     }
@@ -217,7 +236,7 @@ export const EntryForm: React.FC<EntryFormProps> = ({ onSuccess, initialData, on
 
     const config = GET_CONFIG(platform, formData.category);
     if (config.showTruckMatricul && !formData.truck_matricul?.trim()) {
-        alert("Truck Matricul is required.");
+        showNotification("Truck Matricul is required.", "error");
         setLoading(false);
         return;
     }
@@ -237,11 +256,11 @@ export const EntryForm: React.FC<EntryFormProps> = ({ onSuccess, initialData, on
       if (initialData) {
         const { error: updateError } = await supabase.from('production_logs').update(payload).eq('id', initialData.id);
         error = updateError;
-        setSuccessMessage("Record updated!");
+        if (!error) showNotification("Record updated successfully!", "success");
       } else {
         const { error: insertError } = await supabase.from('production_logs').insert([payload]);
         error = insertError;
-        setSuccessMessage("Record saved!");
+        if (!error) showNotification("Production saved successfully!", "success");
         localStorage.removeItem(DRAFT_KEY);
       }
 
@@ -260,9 +279,8 @@ export const EntryForm: React.FC<EntryFormProps> = ({ onSuccess, initialData, on
           comments: ''
         }));
       }
-      setTimeout(() => setSuccessMessage(null), 3000);
     } catch (error: any) {
-      alert('Error: ' + error.message);
+      showNotification('Failed to save record: ' + error.message, 'error');
     } finally {
       setLoading(false);
     }
@@ -275,10 +293,33 @@ export const EntryForm: React.FC<EntryFormProps> = ({ onSuccess, initialData, on
   const config = GET_CONFIG(platform, formData.category);
   const articles = ARTICLES[platform][formData.category] || [];
   const currentTotal = calculateTonnage(formData.truck_count, formData.units_per_truck, formData.weight_per_unit);
-  const adjustedReste = currentStock !== null ? (currentStock - (formData.truck_count || 0)) : null;
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="max-w-4xl mx-auto pb-20">
+      {/* NOTIFICATION OVERLAY */}
+      {notification.isVisible && (
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[100] animate-in slide-in-from-bottom-4 duration-300">
+          <div className={`flex items-center gap-3 px-6 py-4 rounded-2xl shadow-2xl border backdrop-blur-md ${
+            notification.type === 'success' 
+              ? 'bg-emerald-500/90 text-white border-emerald-400' 
+              : 'bg-rose-500/90 text-white border-rose-400'
+          }`}>
+            {notification.type === 'success' ? (
+              <CheckCircle2 className="w-6 h-6" />
+            ) : (
+              <AlertCircle className="w-6 h-6" />
+            )}
+            <p className="font-bold text-sm tracking-tight">{notification.message}</p>
+            <button 
+              onClick={() => setNotification(prev => ({ ...prev, isVisible: false }))}
+              className="ml-2 hover:bg-white/20 p-1 rounded-full transition-colors"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* WELCOME BANNER */}
       <div className="mb-8 flex items-center justify-between bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
         <div className="flex items-center gap-4">
@@ -426,8 +467,20 @@ export const EntryForm: React.FC<EntryFormProps> = ({ onSuccess, initialData, on
              <span className="block text-[10px] font-bold uppercase text-slate-400 tracking-widest mb-2">Total Output</span>
              <div className="text-5xl font-black text-slate-800 tracking-tighter">{currentTotal} <span className="text-2xl text-indigo-600 font-bold">T</span></div>
           </div>
-          <button type="submit" disabled={loading} className="w-full md:w-auto bg-indigo-600 hover:bg-indigo-500 text-white px-10 py-5 rounded-xl font-black text-lg uppercase flex justify-center items-center gap-3 transition-all active:scale-95 shadow-xl shadow-indigo-200">
-            {loading ? 'Processing...' : <><Save size={20} /> Submit Entry</>}
+          <button 
+            type="submit" 
+            disabled={loading} 
+            className={`w-full md:w-auto text-white px-10 py-5 rounded-xl font-black text-lg uppercase flex justify-center items-center gap-3 transition-all active:scale-95 shadow-xl ${
+              loading 
+                ? 'bg-slate-400 cursor-not-allowed' 
+                : 'bg-indigo-600 hover:bg-indigo-500 shadow-indigo-200'
+            }`}
+          >
+            {loading ? (
+              <><RotateCcw className="w-5 h-5 animate-spin" /> Saving...</>
+            ) : (
+              <><Save size={20} /> Submit Entry</>
+            )}
           </button>
         </div>
       </form>

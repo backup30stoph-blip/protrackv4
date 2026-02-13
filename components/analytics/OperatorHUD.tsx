@@ -1,18 +1,43 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase.ts';
 import { useAuth } from '../../context/AuthContext.tsx';
-import { Target, TrendingUp, Truck, Award, Flame, Loader2 } from 'lucide-react';
+import { Target, TrendingUp, Truck, Award, Flame } from 'lucide-react';
+import { PlatformType } from '../../types.ts';
 
-export const OperatorHUD: React.FC = () => {
-  const { session, userRole } = useAuth();
+interface OperatorHUDProps {
+  platform: PlatformType;
+  shift: string;
+}
+
+export const OperatorHUD: React.FC<OperatorHUDProps> = ({ platform, shift }) => {
+  const { session } = useAuth();
   const [loading, setLoading] = useState(true);
+  const [dailyTarget, setDailyTarget] = useState(25);
   const [metrics, setMetrics] = useState({
     count: 0,
     tonnage: 0
   });
 
-  // DAILY TARGET (Gamification)
-  const DAILY_TARGET = 25; // Trucks per shift target
+  // Fetch Dynamic Target from DB
+  useEffect(() => {
+    const fetchTarget = async () => {
+      try {
+        const { data } = await supabase
+          .from('shift_targets')
+          .select('target_trucks')
+          .eq('platform', platform)
+          .eq('shift', shift.toUpperCase())
+          .single();
+        
+        if (data) {
+          setDailyTarget(data.target_trucks);
+        }
+      } catch (e) {
+        console.warn('Using default target', e);
+      }
+    };
+    fetchTarget();
+  }, [platform, shift]);
 
   const getIndustrialDayRange = () => {
     const now = new Date();
@@ -82,20 +107,17 @@ export const OperatorHUD: React.FC = () => {
     };
   }, [session?.user?.id]);
 
-  const progressPercentage = Math.min(100, Math.round((metrics.count / DAILY_TARGET) * 100));
+  const progressPercentage = Math.min(100, Math.round((metrics.count / dailyTarget) * 100));
   
   // Dynamic Color Logic
   let progressColor = 'bg-indigo-600';
-  let textColor = 'text-indigo-600';
   if (progressPercentage >= 100) {
     progressColor = 'bg-emerald-500';
-    textColor = 'text-emerald-600';
   } else if (progressPercentage >= 75) {
      progressColor = 'bg-blue-600';
-     textColor = 'text-blue-600';
   }
 
-  if (loading) return null; // Or a small skeleton
+  if (loading) return null; 
 
   return (
     <div className="bg-slate-900 text-white rounded-2xl p-6 mb-8 border border-slate-700 shadow-2xl relative overflow-hidden animate-in fade-in slide-in-from-top-4">
@@ -115,7 +137,7 @@ export const OperatorHUD: React.FC = () => {
           <div>
             <div className="text-[10px] uppercase font-bold text-slate-400 tracking-widest mb-1">Shift Output</div>
             <div className="text-4xl font-black font-mono tracking-tighter">
-              {metrics.count} <span className="text-lg text-slate-500 font-bold">/ {DAILY_TARGET}</span>
+              {metrics.count} <span className="text-lg text-slate-500 font-bold">/ {dailyTarget}</span>
             </div>
             <div className="text-xs font-bold text-slate-500 mt-0.5">
               {metrics.tonnage.toFixed(1)} T Total Volume

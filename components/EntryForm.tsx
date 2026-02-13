@@ -12,11 +12,11 @@ import {
   RotateCcw,
   AlertCircle
 } from 'lucide-react';
-import { GET_CONFIG, SHIFTS, PALLET_OPTIONS, ARTICLE_LABELS, ARTICLES } from '../constants';
-import { OperationCategory, ShiftType, PalletType, ProductionLog, PlatformType } from '../types';
-import InputField from './ui/InputField';
-import SelectField from './ui/SelectField';
-import { calculateTonnage } from '../utils/calculations';
+import { GET_CONFIG, SHIFTS, PALLET_OPTIONS, ARTICLE_LABELS, ARTICLES } from '../constants.ts';
+import { OperationCategory, ShiftType, PalletType, ProductionLog, PlatformType } from '../types.ts';
+import InputField from './ui/InputField.tsx';
+import SelectField from './ui/SelectField.tsx';
+import { calculateTonnage } from '../utils/calculations.ts';
 
 interface EntryFormProps {
   onAddOrder: (order: Omit<ProductionLog, 'id' | 'created_at'>) => void;

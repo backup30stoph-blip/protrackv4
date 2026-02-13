@@ -1,161 +1,259 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { supabase } from '../../lib/supabase.ts';
-import { ShippingProgram } from '../../types.ts';
-import { FileText, Ship, Calendar, AlertCircle, Search, Flame, TrendingUp } from 'lucide-react';
+import { 
+  Truck, 
+  Clock, 
+  FileText, 
+  ArrowRight, 
+  Bell
+} from 'lucide-react';
+
+interface ProgramStatus {
+  id: string;
+  file_number: string;
+  sap_code: string;
+  destination: string;
+  planned_count: number;
+  total_loaded_cumulative: number;
+  loaded_on_date: number;
+  status: string;
+}
 
 export const ProgramView: React.FC = () => {
-  const [programs, setPrograms] = useState<ShippingProgram[]>([]);
+  const [selectedDate, setSelectedDate] = useState<'YESTERDAY' | 'TODAY' | 'TOMORROW'>('TODAY');
+  const [programs, setPrograms] = useState<ProgramStatus[]>([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
 
-  // Fetch Logic
-  useEffect(() => {
-    const fetchPrograms = async () => {
-      try {
-        const { data, error } = await supabase
-          .from('shipping_program')
-          .select('*')
-          // We fetch all, but we will sort client-side to handle complex "Low Stock" logic
-          .order('external_id', { ascending: true }); 
+  // --- 1. DATE LOGIC ---
+  const getDateObject = (type: string) => {
+    const d = new Date();
+    if (type === 'YESTERDAY') d.setDate(d.getDate() - 1);
+    if (type === 'TOMORROW') d.setDate(d.getDate() + 1);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  };
 
-        if (error) throw error;
-        setPrograms(data as ShippingProgram[] || []);
-      } catch (error) {
-        console.error('Error loading programs:', error);
-      } finally {
-        setLoading(false);
+  // --- 2. DATA FETCHING ---
+  const fetchProgramData = async () => {
+    setLoading(true);
+    const targetDate = getDateObject(selectedDate);
+    const nextDay = new Date(targetDate);
+    nextDay.setDate(nextDay.getDate() + 1);
+
+    try {
+      // A. Get Active Programs
+      const { data: programData, error: programError } = await supabase
+        .from('shipping_program')
+        .select('*')
+        .neq('status', 'COMPLETED')
+        .order('created_at', { ascending: false });
+
+      if (programError) throw programError;
+
+      // B. Get Logs for these programs
+      const fileNumbers = programData.map(p => p.file_number);
+      // Only fetch logs if there are programs
+      let logsData: any[] = [];
+      
+      if (fileNumbers.length > 0) {
+        const { data } = await supabase
+          .from('production_logs')
+          .select('file_number, created_at, truck_count')
+          .in('file_number', fileNumbers);
+        logsData = data || [];
       }
+
+      // C. Process Data
+      const processed: ProgramStatus[] = programData.map(prog => {
+        const progLogs = logsData.filter(l => l.file_number === prog.file_number) || [];
+        
+        const totalLoaded = progLogs.reduce((sum: number, l: any) => sum + (l.truck_count || 0), 0);
+        
+        const dailyLoaded = progLogs
+          .filter((l: any) => {
+            const logDate = new Date(l.created_at);
+            return logDate >= targetDate && logDate < nextDay;
+          })
+          .reduce((sum: number, l: any) => sum + (l.truck_count || 0), 0);
+
+        return {
+          id: prog.id,
+          file_number: prog.file_number,
+          sap_code: prog.sap_order_code || prog.sap_code || '', // Handle varied naming in types vs DB
+          destination: prog.destination,
+          planned_count: prog.planned_count || 0,
+          total_loaded_cumulative: totalLoaded,
+          loaded_on_date: dailyLoaded,
+          status: prog.status
+        };
+      });
+
+      setPrograms(processed);
+    } catch (err) {
+      console.error("Error fetching data:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchProgramData();
+  }, [selectedDate]);
+
+  // --- 3. HEADER STATS CALCULATION ---
+  const stats = useMemo(() => {
+    return {
+      charged: programs.reduce((sum, p) => sum + p.loaded_on_date, 0),
+      pending: programs.reduce((sum, p) => sum + Math.max(0, p.planned_count - p.total_loaded_cumulative), 0),
+      active: programs.length
     };
-
-    fetchPrograms();
-  }, []);
-
-  // Filter & Sort Logic
-  const sortedPrograms = useMemo(() => {
-    let filtered = programs.filter(prog => {
-      if (!searchTerm) return true;
-      const term = searchTerm.toLowerCase();
-      return (
-        prog.file_number?.toLowerCase().includes(term) ||
-        prog.sap_order_code?.toLowerCase().includes(term) ||
-        prog.destination?.toLowerCase().includes(term) ||
-        prog.shipping_line?.toLowerCase().includes(term)
-      );
-    });
-
-    // PRIORITY SORT: Low stock (<10) goes to top
-    return filtered.sort((a, b) => {
-      const stockA = a.planned_count || 0;
-      const stockB = b.planned_count || 0;
-      
-      const isLowA = stockA > 0 && stockA < 10;
-      const isLowB = stockB > 0 && stockB < 10;
-
-      if (isLowA && !isLowB) return -1;
-      if (!isLowA && isLowB) return 1;
-      
-      // Secondary sort: File number
-      return a.file_number.localeCompare(b.file_number);
-    });
-
-  }, [programs, searchTerm]);
-
-  if (loading) return <div className="text-slate-500 text-center py-10 flex items-center justify-center gap-2"><div className="animate-spin h-4 w-4 border-2 border-indigo-600 rounded-full border-t-transparent"></div> Loading Shipping Schedule...</div>;
+  }, [programs]);
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500">
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-200 pb-4">
-        <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-          <Ship className="w-6 h-6 text-indigo-600" />
-          Shipping Program
-        </h2>
-        
-        {/* Search Bar */}
-        <div className="relative w-full md:w-64">
-           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-             <Search className="h-4 w-4 text-slate-400" />
-           </div>
-           <input
-             type="text"
-             placeholder="Search Dossier or SAP Code..."
-             className="w-full bg-white border border-slate-200 rounded-lg py-2 pl-10 pr-4 text-sm text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-colors"
-             value={searchTerm}
-             onChange={(e) => setSearchTerm(e.target.value)}
-           />
+    <div className="min-h-screen bg-slate-50/50 p-4 md:p-6 max-w-5xl mx-auto font-sans animate-in fade-in duration-500">
+      
+      {/* HEADER SECTION */}
+      <div className="flex justify-between items-start mb-6">
+        <div>
+          <p className="text-xs font-bold text-slate-500 tracking-wider uppercase mb-1">Logistics Manager</p>
+          <h1 className="text-3xl font-black text-slate-900 tracking-tight">Shipping Program</h1>
+        </div>
+        <button className="p-3 bg-white rounded-full shadow-sm border border-slate-100 text-slate-600 hover:text-indigo-600 transition-colors">
+          <Bell size={20} />
+        </button>
+      </div>
+
+      {/* DATE TABS (Pill Style) */}
+      <div className="bg-slate-200/60 p-1.5 rounded-2xl flex items-center mb-8">
+        {['YESTERDAY', 'TODAY', 'TOMORROW'].map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setSelectedDate(tab as any)}
+            className={`flex-1 py-2.5 rounded-xl text-xs font-black transition-all duration-200 ${
+              selectedDate === tab 
+                ? 'bg-white text-slate-900 shadow-sm transform scale-[1.02]' 
+                : 'text-slate-500 hover:text-slate-700'
+            }`}
+          >
+            {tab}
+          </button>
+        ))}
+      </div>
+
+      {/* TOP SUMMARY CARDS */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+        {/* Card 1: Charged */}
+        <div className="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-100 flex flex-col justify-between h-32">
+          <div className="w-10 h-10 bg-emerald-50 rounded-full flex items-center justify-center text-emerald-600 relative overflow-hidden">
+            <Truck size={20} fill="currentColor" className="opacity-20 scale-150 absolute" />
+            <Truck size={18} className="relative z-10" />
+          </div>
+          <div>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Charged ({selectedDate})</p>
+            <p className="text-3xl font-black text-slate-900 leading-none">{stats.charged} <span className="text-sm text-slate-400 font-bold">TRUCKS</span></p>
+          </div>
+        </div>
+
+        {/* Card 2: Pending */}
+        <div className="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-100 flex flex-col justify-between h-32">
+          <div className="w-10 h-10 bg-amber-50 rounded-full flex items-center justify-center text-amber-600">
+            <Clock size={20} />
+          </div>
+          <div>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Pending</p>
+            <p className="text-3xl font-black text-slate-900 leading-none">{stats.pending} <span className="text-sm text-slate-400 font-bold">TRUCKS</span></p>
+          </div>
+        </div>
+
+        {/* Card 3: Active */}
+        <div className="bg-white p-5 rounded-[2rem] shadow-sm border border-slate-100 flex flex-col justify-between h-32">
+          <div className="w-10 h-10 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600">
+            <FileText size={20} />
+          </div>
+          <div>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Active Programs</p>
+            <p className="text-3xl font-black text-slate-900 leading-none">{stats.active} <span className="text-sm text-slate-400 font-bold">FILES</span></p>
+          </div>
         </div>
       </div>
 
-      {sortedPrograms.length === 0 && (
-         <div className="text-center py-12 bg-white rounded-xl border border-dashed border-slate-300">
-          <p className="text-slate-500">No matching shipping programs found.</p>
-        </div>
-      )}
+      <h2 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-4 px-1">Current Programs</h2>
 
-      <div className="grid gap-4 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-        {sortedPrograms.map((prog) => {
-          const isLowStock = (prog.planned_count || 0) > 0 && (prog.planned_count || 0) < 10;
-          
+      {/* PROGRAM LIST */}
+      <div className="space-y-4 pb-20">
+        {loading ? (
+          <div className="text-center py-20 text-slate-400 flex flex-col items-center gap-2">
+            <div className="animate-spin h-6 w-6 border-2 border-indigo-600 rounded-full border-t-transparent"></div>
+            <span className="text-xs font-bold uppercase tracking-wider">Loading Data...</span>
+          </div>
+        ) : programs.length === 0 ? (
+           <div className="text-center py-20 bg-white rounded-[2rem] border border-dashed border-slate-200">
+             <p className="text-slate-400 font-medium">No active shipping programs found.</p>
+           </div>
+        ) : programs.map((prog) => {
+          const remaining = Math.max(0, prog.planned_count - prog.total_loaded_cumulative);
+          const progress = prog.planned_count > 0 
+            ? Math.min(100, (prog.total_loaded_cumulative / prog.planned_count) * 100) 
+            : 0;
+          const isHighPriority = remaining < 10 && remaining > 0;
+
           return (
-            <div 
-              key={prog.id} 
-              className={`
-                relative bg-white border rounded-xl p-4 transition-all flex flex-col justify-between shadow-sm hover:shadow-md group
-                ${isLowStock ? 'border-orange-300 ring-1 ring-orange-100' : 'border-slate-200 hover:border-indigo-300'}
-              `}
-            >
-              {/* LOW STOCK BADGE */}
-              {isLowStock && (
-                <div className="absolute -top-2 -right-2 bg-gradient-to-r from-orange-500 to-red-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-lg flex items-center gap-1 animate-in zoom-in">
-                  <Flame size={10} className="animate-pulse" /> PRIORITY
-                </div>
-              )}
-
-              {/* Header: File Number & Destination */}
+            <div key={prog.id} className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100 relative overflow-hidden group hover:border-indigo-100 transition-colors">
+              
+              {/* Header Row */}
               <div className="flex justify-between items-start mb-3">
                 <div>
-                  <div className={`flex items-center gap-2 mb-1 ${isLowStock ? 'text-orange-600' : 'text-indigo-600'}`}>
-                    <FileText className="w-3 h-3" />
-                    <span className="text-xs font-bold uppercase tracking-wider">{prog.file_number}</span>
-                  </div>
-                  <div className="text-slate-900 font-bold text-lg leading-tight">{prog.destination}</div>
+                  <h3 className="text-xl font-black text-slate-900">{prog.file_number}</h3>
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mt-0.5">SAP CODE: {prog.sap_code || 'N/A'}</p>
                 </div>
-                <div className="text-[10px] font-bold bg-slate-100 text-slate-600 px-2 py-1 rounded uppercase tracking-wider">
-                  {prog.shipping_line}
-                </div>
-              </div>
-
-              {/* Metrics Grid */}
-              <div className={`grid grid-cols-2 gap-2 mb-4 p-3 rounded-lg border ${isLowStock ? 'bg-orange-50 border-orange-100' : 'bg-slate-50 border-slate-100'}`}>
-                <div>
-                  <div className="text-[10px] text-slate-400 uppercase font-bold">Planned Qty</div>
-                  <div className="text-slate-800 font-bold">{prog.planned_quantity} T</div>
-                </div>
-                <div>
-                  <div className={`text-[10px] uppercase font-bold ${isLowStock ? 'text-orange-600' : 'text-slate-400'}`}>Containers</div>
-                  <div className={`font-black ${isLowStock ? 'text-orange-600 text-lg' : 'text-slate-800'}`}>
-                     {prog.planned_count}
-                     {isLowStock && <span className="text-[10px] ml-1 animate-pulse">🔥</span>}
-                  </div>
-                </div>
-                <div className={`col-span-2 mt-1 pt-1 border-t flex items-center gap-1.5 ${isLowStock ? 'border-orange-200' : 'border-slate-200'}`}>
-                  <Calendar className="w-3 h-3 text-slate-400" />
-                  <span className="text-xs text-slate-500">
-                    {prog.start_date_raw} — {prog.deadline_raw}
+                {isHighPriority ? (
+                  <span className="bg-emerald-50 text-emerald-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wide border border-emerald-100">
+                    High Priority
                   </span>
+                ) : (
+                  <span className="bg-indigo-50 text-indigo-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-wide border border-indigo-100">
+                    In Progress
+                  </span>
+                )}
+              </div>
+
+              {/* Route Info */}
+              <div className="flex items-center gap-3 text-slate-700 font-bold mb-5 bg-slate-50 p-3 rounded-xl border border-slate-100">
+                <span className="text-xs uppercase tracking-wide text-slate-400">Route</span>
+                <span className="text-sm">Warehouse A</span>
+                <ArrowRight size={14} className="text-slate-300" />
+                <span className="text-sm">{prog.destination || 'Unknown Dest'}</span>
+              </div>
+
+              {/* Metrics Row */}
+              <div className="flex justify-between items-end mb-3">
+                <div>
+                  <p className="text-[11px] text-slate-400 font-bold mb-0.5 uppercase tracking-wide">
+                    Daily Loading ({selectedDate})
+                  </p>
+                  <p className="text-sm font-black text-emerald-600 flex items-center gap-1">
+                    {prog.loaded_on_date} <span className="text-[10px] text-emerald-400 uppercase">Trucks</span>
+                  </p>
+                </div>
+                <div className="text-right">
+                  <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mb-0.5">
+                    Remaining
+                  </p>
+                  <div className="flex items-center justify-end gap-1">
+                    <span className="text-amber-500 font-black text-lg">{remaining}</span>
+                    <span className="text-slate-300 text-[10px] font-bold uppercase">/ {prog.planned_count} Total</span>
+                  </div>
                 </div>
               </div>
 
-              {/* Footer: Instructions */}
-              {prog.special_instructions && (
-                <div className="mt-auto">
-                  <div className="flex items-start gap-1.5 bg-rose-50 p-2 rounded border border-rose-100">
-                    <AlertCircle className="w-3 h-3 text-rose-500 mt-0.5 shrink-0" />
-                    <p className="text-[10px] text-rose-700 line-clamp-2 leading-relaxed">
-                      {prog.special_instructions}
-                    </p>
-                  </div>
-                </div>
-              )}
+              {/* Progress Bar */}
+              <div className="w-full h-3 bg-slate-100 rounded-full overflow-hidden">
+                <div 
+                  className={`h-full rounded-full transition-all duration-1000 ${isHighPriority ? 'bg-emerald-500' : 'bg-indigo-600'}`}
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+
             </div>
           );
         })}

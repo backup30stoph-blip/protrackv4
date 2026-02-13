@@ -1,4 +1,5 @@
 
+
 -- ==========================================
 -- PROTRACK: Industrial Production Log Schema
 -- ==========================================
@@ -142,3 +143,87 @@ CREATE TRIGGER update_planned_count_trigger
 AFTER INSERT ON public.production_logs
 FOR EACH ROW
 EXECUTE FUNCTION public.decrease_container_count();
+
+-- ==========================================
+-- 2. Smart Alerts & Operator HUD Updates
+-- ==========================================
+
+-- Add columns to help with Smart Alerts and Sorting
+ALTER TABLE public.shipping_program
+ADD COLUMN IF NOT EXISTS priority_flag BOOLEAN DEFAULT FALSE, -- Manually flagged 'Hot' files
+ADD COLUMN IF NOT EXISTS last_activity_at TIMESTAMPTZ DEFAULT NOW(), -- To find stale dossiers
+ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ; -- To filter out old history quickly
+
+-- Index for the "Closing Soon" query
+CREATE INDEX IF NOT EXISTS idx_shipping_program_planned_count 
+ON public.shipping_program (planned_count) 
+WHERE status != 'COMPLETED';
+
+-- Index for the Operator HUD (Queries by User + Date + Shift)
+CREATE INDEX IF NOT EXISTS idx_production_logs_user_date 
+ON public.production_logs (user_id, created_at DESC);
+
+-- Index for the Analytics View (Queries by Date Range)
+CREATE INDEX IF NOT EXISTS idx_production_logs_created_at_brin
+ON public.production_logs USING BRIN (created_at);
+
+-- ==========================================
+-- 3. Shift Targets Table (For Operator HUD)
+-- ==========================================
+
+CREATE TABLE IF NOT EXISTS public.shift_targets (
+    id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+    platform TEXT NOT NULL, -- 'BIG_BAG' or '50KG'
+    shift TEXT NOT NULL,    -- 'MORNING', 'AFTERNOON', 'NIGHT'
+    target_trucks INTEGER DEFAULT 25,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(platform, shift) -- Only one target per shift type
+);
+
+-- Insert default targets
+INSERT INTO public.shift_targets (platform, shift, target_trucks) VALUES
+('BIG_BAG', 'MORNING', 25),
+('BIG_BAG', 'AFTERNOON', 25),
+('BIG_BAG', 'NIGHT', 20),
+('50KG', 'MORNING', 15),
+('50KG', 'AFTERNOON', 15),
+('50KG', 'NIGHT', 10)
+ON CONFLICT (platform, shift) DO NOTHING;
+
+-- Enable RLS
+ALTER TABLE public.shift_targets ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Read targets" ON public.shift_targets;
+CREATE POLICY "Read targets" ON public.shift_targets FOR SELECT USING (true);
+
+-- ==========================================
+-- 4. Create a "Smart View" for Admins
+-- ==========================================
+
+DROP VIEW IF EXISTS public.shipping_program_dashboard;
+
+CREATE VIEW public.shipping_program_dashboard WITH (security_invoker = true) AS
+SELECT 
+    sp.id,
+    sp.file_number,
+    sp.destination,
+    sp.planned_count,
+    sp.status,
+    
+    -- Total Loaded
+    COALESCE(sum(pl.truck_count), 0)::bigint AS total_loaded,
+    
+    -- Remaining
+    GREATEST(0::bigint, sp.planned_count - COALESCE(sum(pl.truck_count), 0)::bigint) AS remaining_trucks,
+    
+    -- Loaded Today
+    COALESCE(sum(
+        CASE
+            WHEN pl.created_at >= CURRENT_DATE THEN pl.truck_count
+            ELSE 0
+        END), 0)::bigint AS loaded_today
+
+FROM public.shipping_program sp
+LEFT JOIN public.production_logs pl ON sp.file_number = pl.file_number
+WHERE sp.status <> 'COMPLETED'
+GROUP BY sp.id, sp.file_number, sp.destination, sp.planned_count, sp.status;

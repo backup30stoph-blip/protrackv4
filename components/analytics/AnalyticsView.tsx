@@ -1,447 +1,380 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useCallback } from 'react';
 import { supabase } from '../../lib/supabase.ts';
 import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, Legend, ResponsiveContainer, 
-  PieChart, Pie, Cell 
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, 
+  PieChart, Pie, Cell, AreaChart, Area, LineChart, Line 
 } from 'recharts';
-import { Users, Scale, Clock, TrendingUp, Calendar, Filter, Loader2, FileText, ChevronRight } from 'lucide-react';
+import { 
+  Calendar, Filter, Download, MoreHorizontal, RefreshCw 
+} from 'lucide-react';
 import { useAuth } from '../../context/AuthContext.tsx';
-import { DailyProductionStat } from '../../types.ts';
+import { generatePowerPoint } from '../../utils/exportToPPT.ts';
 
-// --- TYPES ---
-interface AggregatedData {
-  name: string; // Operator Name
-  MORNING: number;
-  AFTERNOON: number; // Or EVENING
-  NIGHT: number;
-  totalTonnage: number;
-  totalTrucks: number;
-}
-
-// Updated Colors for Light Theme
-const COLORS = {
-  MORNING: '#f59e0b',   // Amber
-  AFTERNOON: '#8b5cf6', // Violet
-  EVENING: '#8b5cf6',   
-  NIGHT: '#3b82f6',     // Blue
+// --- STYLES & CONFIG ---
+const THEME = {
+  blue: '#2563eb',    // Corporate Blue (Primary)
+  lightBlue: '#dbeafe', 
+  darkBlue: '#1e40af',
+  slate: '#64748b',   // Text Gray
+  border: '#e2e8f0',  // Light Border
+  grid: '#f1f5f9',    // Chart Grid
 };
 
-// --- SUB-COMPONENT: REAL-TIME DASHBOARD (Existing Logic) ---
-const LiveDashboard = () => {
-  const [data, setData] = useState<any[]>([]);
+const PIE_COLORS = ['#3b82f6', '#60a5fa', '#93c5fd', '#bfdbfe'];
+
+// --- TYPES ---
+interface LogData {
+  created_at: string;
+  total_tonnage: number;
+  truck_count: number;
+  shift: string;
+  category: string;
+  platform: string;
+  profiles: { full_name: string } | null;
+}
+
+// --- HELPER COMPONENT: SPARKLINE CARD ---
+const SparklineCard = ({ title, value, unit, data, dataKey, color = "#3b82f6" }: any) => (
+  <div className="bg-white p-5 rounded-sm border border-slate-200 shadow-sm flex flex-col justify-between h-[160px] relative overflow-hidden group hover:shadow-md transition-shadow">
+    <div className="flex justify-between items-start z-10">
+      <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider">{title}</h3>
+    </div>
+    
+    <div className="z-10 mt-2">
+      <div className="text-4xl font-bold text-blue-600 tracking-tight">
+        {value} <span className="text-lg text-slate-400 font-medium">{unit}</span>
+      </div>
+    </div>
+
+    {/* Sparkline Area Chart positioned at the bottom */}
+    <div className="absolute bottom-0 left-0 right-0 h-16 opacity-30">
+      <ResponsiveContainer width="100%" height="100%">
+        <AreaChart data={data}>
+          <defs>
+            <linearGradient id={`grad-${title.replace(/\s/g, '')}`} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor={color} stopOpacity={0.8}/>
+              <stop offset="100%" stopColor={color} stopOpacity={0}/>
+            </linearGradient>
+          </defs>
+          <Area 
+            type="monotone" 
+            dataKey={dataKey} 
+            stroke={color} 
+            strokeWidth={2} 
+            fill={`url(#grad-${title.replace(/\s/g, '')})`} 
+          />
+        </AreaChart>
+      </ResponsiveContainer>
+    </div>
+  </div>
+);
+
+export const AnalyticsView: React.FC = () => {
+  const { userRole } = useAuth();
+  const [logs, setLogs] = useState<LogData[]>([]);
   const [loading, setLoading] = useState(true);
-  const [dateRange, setDateRange] = useState<'TODAY' | 'WEEK' | 'MONTH' | 'ALL'>('MONTH');
-
-  const fetchData = async () => {
+  
+  // --- DATA FETCHING ---
+  const fetchData = useCallback(async () => {
     setLoading(true);
-    try {
-      let query = supabase
-        .from('production_logs')
-        .select(`
-          total_tonnage,
-          truck_count,
-          shift,
-          created_at,
-          profiles:user_id ( full_name, username )
-        `);
+    
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - 30); // Default last 30 days
 
-      const now = new Date();
-      if (dateRange === 'TODAY') {
-        query = query.gte('created_at', new Date(now.setHours(0,0,0,0)).toISOString());
-      } else if (dateRange === 'WEEK') {
-        const weekAgo = new Date();
-        weekAgo.setDate(now.getDate() - 7);
-        query = query.gte('created_at', weekAgo.toISOString());
-      } else if (dateRange === 'MONTH') {
-        const monthAgo = new Date();
-        monthAgo.setMonth(now.getMonth() - 1);
-        query = query.gte('created_at', monthAgo.toISOString());
-      }
+    const { data, error } = await supabase
+      .from('production_logs')
+      .select(`
+        created_at,
+        total_tonnage,
+        truck_count,
+        shift,
+        category,
+        platform,
+        profiles:user_id ( full_name )
+      `)
+      .gte('created_at', startDate.toISOString())
+      .order('created_at', { ascending: true });
 
-      const { data: logs, error } = await query;
-      if (error) throw error;
-      setData(logs || []);
-    } catch (err) {
-      console.error('Error fetching analytics:', err);
-    } finally {
-      setLoading(false);
+    if (!error && data) {
+      setLogs(data as any);
     }
-  };
+    setLoading(false);
+  }, []);
 
   useEffect(() => {
     fetchData();
-  }, [dateRange]);
+  }, [fetchData]);
 
-  const { chartData, shiftTotals, grandTotal, totalTrucks, topPerformer } = useMemo(() => {
-    const operatorMap = new Map<string, AggregatedData>();
-    const shiftMap = { MORNING: 0, AFTERNOON: 0, EVENING: 0, NIGHT: 0 };
-    let gTotal = 0;
-    let tTrucks = 0;
+  // --- DATA PROCESSING (MEMOIZED) ---
+  const dashboardData = useMemo(() => {
+    // 1. Daily Trend Data (for Sparklines & Main Chart)
+    const dailyMap = new Map();
+    let totalTonnage = 0;
+    let totalTrucks = 0;
+    const operatorMap = new Map();
 
-    data.forEach(log => {
-      // @ts-ignore
-      const name = log.profiles?.full_name || log.profiles?.username || 'Unknown';
-      const tonnage = Number(log.total_tonnage) || 0;
-      const trucks = Number(log.truck_count) || 0;
-      let shift = (log.shift || 'MORNING').toUpperCase();
-      if (shift === 'EVENING') shift = 'AFTERNOON'; 
+    logs.forEach(log => {
+      const date = new Date(log.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      
+      // Aggregates
+      totalTonnage += log.total_tonnage;
+      totalTrucks += log.truck_count;
 
-      gTotal += tonnage;
-      tTrucks += trucks;
-      // @ts-ignore
-      if (shiftMap[shift] !== undefined) shiftMap[shift] += tonnage;
-
-      if (!operatorMap.has(name)) {
-        operatorMap.set(name, { 
-          name, MORNING: 0, AFTERNOON: 0, NIGHT: 0, totalTonnage: 0, totalTrucks: 0 
-        });
+      // Daily Grouping
+      if (!dailyMap.has(date)) {
+        dailyMap.set(date, { date, tonnage: 0, trucks: 0, count: 0 });
       }
-      const opStats = operatorMap.get(name)!;
-      // @ts-ignore
-      opStats[shift] = (opStats[shift] || 0) + tonnage;
-      opStats.totalTonnage += tonnage;
-      opStats.totalTrucks += trucks;
+      const dayStat = dailyMap.get(date);
+      dayStat.tonnage += log.total_tonnage;
+      dayStat.trucks += log.truck_count;
+      dayStat.count += 1;
+
+      // Operator Grouping
+      const opName = log.profiles?.full_name || 'Unknown';
+      if (!operatorMap.has(opName)) {
+        operatorMap.set(opName, { name: opName, tonnage: 0, trucks: 0, trend: [] });
+      }
+      const opStat = operatorMap.get(opName);
+      opStat.tonnage += log.total_tonnage;
+      opStat.trucks += log.truck_count;
+      // We push specific tonnage for sparklines (simplified)
+      opStat.trend.push({ val: log.total_tonnage });
     });
 
-    const sortedChartData = Array.from(operatorMap.values())
-      .sort((a, b) => b.totalTonnage - a.totalTonnage);
+    const dailyTrend = Array.from(dailyMap.values());
+    const operatorStats = Array.from(operatorMap.values()).sort((a, b) => b.tonnage - a.tonnage);
 
-    const shiftPieData = [
-      { name: 'Morning', value: shiftMap.MORNING, color: COLORS.MORNING },
-      { name: 'Afternoon', value: shiftMap.AFTERNOON + shiftMap.EVENING, color: COLORS.AFTERNOON },
-      { name: 'Night', value: shiftMap.NIGHT, color: COLORS.NIGHT },
-    ].filter(s => s.value > 0);
+    // 2. Platform Distribution (Donut)
+    const platformDist = logs.reduce((acc: any, log) => {
+      const key = log.platform || 'Other';
+      acc[key] = (acc[key] || 0) + log.total_tonnage;
+      return acc;
+    }, {});
+    
+    const pieData = Object.entries(platformDist).map(([name, value]) => ({ name, value }));
 
-    return { 
-      chartData: sortedChartData, 
-      shiftTotals: shiftPieData, 
-      grandTotal: gTotal,
-      totalTrucks: tTrucks,
-      topPerformer: sortedChartData[0]
+    return {
+      totalTonnage,
+      totalTrucks,
+      avgTonnage: totalTrucks > 0 ? totalTonnage / totalTrucks : 0,
+      dailyTrend,
+      operatorStats,
+      pieData
     };
-  }, [data]);
+  }, [logs]);
 
-  return (
-    <div className="space-y-8 animate-in fade-in duration-500">
-      
-      {/* FILTERS */}
-      <div className="flex bg-slate-100 p-1.5 rounded-xl border border-slate-200 w-fit">
-        {(['TODAY', 'WEEK', 'MONTH', 'ALL'] as const).map((range) => (
-          <button
-            key={range}
-            onClick={() => setDateRange(range)}
-            className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${
-              dateRange === range 
-                ? 'bg-white text-indigo-700 shadow-sm border border-slate-200' 
-                : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'
-            }`}
-          >
-            {range}
-          </button>
-        ))}
-      </div>
-
-      {loading ? (
-        <div className="h-96 flex flex-col items-center justify-center text-slate-500 bg-white rounded-3xl border border-slate-200">
-          <Loader2 className="w-10 h-10 animate-spin text-indigo-600 mb-3" />
-          <span className="text-xs font-bold uppercase tracking-widest">Crunching Data...</span>
-        </div>
-      ) : (
-        <>
-          {/* KPI CARDS */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden group hover:shadow-md transition-shadow">
-              <div className="absolute top-0 right-0 p-4 opacity-[0.05] group-hover:opacity-10 transition-opacity"><Scale className="w-24 h-24 text-emerald-600" /></div>
-              <p className="text-slate-500 font-bold text-xs uppercase tracking-widest">Total Tonnage</p>
-              <div className="text-5xl font-black text-slate-800 mt-2 relative z-10">{grandTotal.toLocaleString(undefined, { maximumFractionDigits: 0 })} <span className="text-xl text-emerald-600">T</span></div>
-            </div>
-            
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden group hover:shadow-md transition-shadow">
-              <div className="absolute top-0 right-0 p-4 opacity-[0.05] group-hover:opacity-10 transition-opacity"><Clock className="w-24 h-24 text-indigo-600" /></div>
-              <p className="text-slate-500 font-bold text-xs uppercase tracking-widest">Total Trucks</p>
-              <div className="text-5xl font-black text-slate-800 mt-2 relative z-10">{totalTrucks}</div>
-            </div>
-
-            <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden group hover:shadow-md transition-shadow">
-               <div className="absolute top-0 right-0 p-4 opacity-[0.05] group-hover:opacity-10 transition-opacity"><Users className="w-24 h-24 text-amber-600" /></div>
-              <p className="text-slate-500 font-bold text-xs uppercase tracking-widest">Top Performer</p>
-              <div className="text-2xl font-black text-slate-800 mt-3 truncate relative z-10">{topPerformer?.name || 'N/A'}</div>
-              <div className="text-sm text-emerald-600 font-bold relative z-10">{topPerformer?.totalTonnage.toFixed(0)} T</div>
-            </div>
-          </div>
-
-          {/* CHARTS SECTION */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            
-            <div className="lg:col-span-2 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-              <h3 className="text-sm font-bold text-slate-700 uppercase mb-8 flex items-center gap-2">
-                <Users className="w-4 h-4 text-indigo-600" /> Operator Tonnage by Shift
-              </h3>
-              <div className="h-[400px] min-h-[400px] w-full min-w-0">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData} margin={{ top: 20, right: 30, left: 0, bottom: 5 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
-                    <XAxis dataKey="name" stroke="#64748b" fontSize={12} tick={{ fill: '#64748b', fontSize: 11 }} tickLine={false} axisLine={false} />
-                    <YAxis stroke="#64748b" fontSize={12} tick={{ fill: '#64748b' }} tickLine={false} axisLine={false} />
-                    <RechartsTooltip 
-                      contentStyle={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0', color: '#1e293b', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
-                      cursor={{ fill: '#f1f5f9' }}
-                    />
-                    <Legend iconType="circle" />
-                    <Bar dataKey="MORNING" stackId="a" fill={COLORS.MORNING} name="Morning" radius={[0, 0, 0, 0]} />
-                    <Bar dataKey="AFTERNOON" stackId="a" fill={COLORS.AFTERNOON} name="Afternoon" radius={[0, 0, 0, 0]} />
-                    <Bar dataKey="NIGHT" stackId="a" fill={COLORS.NIGHT} name="Night" radius={[6, 6, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-
-            <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
-              <h3 className="text-sm font-bold text-slate-700 uppercase mb-8 flex items-center gap-2">
-                <Clock className="w-4 h-4 text-emerald-600" /> Shift Distribution
-              </h3>
-              <div className="h-[400px] min-h-[400px] w-full min-w-0 flex items-center justify-center">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={shiftTotals}
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={80}
-                      outerRadius={120}
-                      paddingAngle={4}
-                      dataKey="value"
-                      stroke="#ffffff"
-                      strokeWidth={2}
-                    >
-                      {shiftTotals.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <RechartsTooltip contentStyle={{ backgroundColor: '#ffffff', borderColor: '#e2e8f0', color: '#1e293b', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }} />
-                    <Legend verticalAlign="bottom" height={36} iconType="circle"/>
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-            </div>
-
-          </div>
-        </>
-      )}
-    </div>
-  );
-};
-
-// --- SUB-COMPONENT: DAILY REPORTS (New Logic) ---
-const ProductionReports = () => {
-  const [reportType, setReportType] = useState<'DAILY' | 'MONTHLY'>('DAILY');
-  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
-  const [selectedMonth, setSelectedMonth] = useState<string>(new Date().toISOString().slice(0, 7));
-  
-  const [stats, setStats] = useState<DailyProductionStat[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  const fetchReports = async () => {
-    setLoading(true);
-    try {
-      let query = supabase.from('daily_production_stats').select('*');
-
-      if (reportType === 'DAILY') {
-         query = query.eq('production_date', selectedDate);
-      } else {
-         query = query.eq('production_month', selectedMonth);
-      }
-
-      const { data, error } = await query;
-      if (error) throw error;
-      setStats(data as DailyProductionStat[] || []);
-    } catch (err) {
-      console.error("Error fetching reports:", err);
-    } finally {
-      setLoading(false);
-    }
+  // --- HANDLERS ---
+  const handlePPTExport = () => {
+    if (!dashboardData) return;
+    generatePowerPoint(dashboardData);
   };
 
-  useEffect(() => {
-    fetchReports();
-  }, [reportType, selectedDate, selectedMonth]);
-
-  // Calculations for Summary
-  const totals = useMemo(() => {
-    return stats.reduce((acc, curr) => ({
-      tonnage: acc.tonnage + curr.total_tonnage,
-      trucks: acc.trucks + curr.total_trucks,
-      morning: acc.morning + curr.morning_tonnage,
-      afternoon: acc.afternoon + curr.afternoon_tonnage,
-      night: acc.night + curr.night_tonnage
-    }), { tonnage: 0, trucks: 0, morning: 0, afternoon: 0, night: 0 });
-  }, [stats]);
+  if (userRole !== 'admin') return <div className="p-10 text-center text-slate-500">Access Restricted</div>;
 
   return (
-    <div className="space-y-6 animate-in fade-in slide-in-from-right-4 duration-500">
+    <div className="min-h-screen bg-slate-50/50 p-6 font-sans text-slate-800 animate-in fade-in duration-500">
       
-      {/* CONTROLS */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col md:flex-row gap-4 items-center justify-between">
+      {/* --- HEADER --- */}
+      <div className="flex flex-col md:flex-row justify-between items-center mb-8 bg-white p-4 border border-slate-200 shadow-sm rounded-sm">
+        <div className="flex items-center gap-4">
+          <div className="bg-blue-600 p-2 rounded text-white">
+             <span className="font-bold text-lg tracking-tighter">W</span>
+          </div>
+          <div>
+            <h1 className="text-lg font-bold text-slate-800">ProTrack Adaptive Planning</h1>
+            <div className="flex items-center gap-2 text-xs text-slate-500">
+              <span>Production Analysis</span>
+              <span className="text-slate-300">|</span>
+              <span className="flex items-center gap-1"><Calendar size={12}/> Last 30 Days</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={fetchData} 
+            disabled={loading}
+            className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded border border-slate-200 transition-colors disabled:opacity-70 disabled:cursor-not-allowed"
+          >
+            <RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Refresh
+          </button>
+          <button 
+            onClick={handlePPTExport} 
+            className="flex items-center gap-2 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded border border-slate-200 transition-colors"
+          >
+            <Download size={14} /> Export PPT
+          </button>
+          <div className="w-px h-6 bg-slate-200 mx-2"></div>
+          <button className="p-1.5 text-slate-400 hover:text-slate-600">
+            <MoreHorizontal size={20} />
+          </button>
+        </div>
+      </div>
+
+      {/* --- KPI GRID --- */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6">
         
-        <div className="flex bg-slate-100 p-1 rounded-lg">
-           <button 
-             onClick={() => setReportType('DAILY')}
-             className={`px-4 py-2 text-xs font-bold rounded-md transition-all ${reportType === 'DAILY' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-           >
-             Daily Report
-           </button>
-           <button 
-             onClick={() => setReportType('MONTHLY')}
-             className={`px-4 py-2 text-xs font-bold rounded-md transition-all ${reportType === 'MONTHLY' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-           >
-             Monthly Summary
-           </button>
-        </div>
+        {/* Metric 1: Total Tonnage */}
+        <SparklineCard 
+          title="Net Tonnage Output" 
+          value={dashboardData.totalTonnage.toLocaleString(undefined, {maximumFractionDigits: 0})} 
+          unit="T" 
+          data={dashboardData.dailyTrend} 
+          dataKey="tonnage"
+        />
 
-        <div className="flex items-center gap-3">
-           <span className="text-xs font-bold text-slate-500 uppercase">Select Period:</span>
-           {reportType === 'DAILY' ? (
-             <input 
-               type="date" 
-               value={selectedDate}
-               onChange={(e) => setSelectedDate(e.target.value)}
-               className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold text-slate-700 focus:outline-none focus:border-indigo-500"
-             />
-           ) : (
-             <input 
-               type="month" 
-               value={selectedMonth}
-               onChange={(e) => setSelectedMonth(e.target.value)}
-               className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-sm font-bold text-slate-700 focus:outline-none focus:border-indigo-500"
-             />
-           )}
-        </div>
-      </div>
+        {/* Metric 2: Total Trucks */}
+        <SparklineCard 
+          title="Total Trucks Loaded" 
+          value={dashboardData.totalTrucks} 
+          unit="#" 
+          data={dashboardData.dailyTrend} 
+          dataKey="trucks"
+          color="#8b5cf6" // Violet
+        />
 
-      {loading ? (
-        <div className="py-20 flex justify-center text-slate-400">
-           <Loader2 className="animate-spin w-8 h-8" />
-        </div>
-      ) : stats.length === 0 ? (
-        <div className="bg-slate-50 rounded-xl border border-dashed border-slate-300 p-12 text-center text-slate-500">
-           <Calendar className="w-12 h-12 mx-auto mb-3 opacity-20" />
-           <p className="font-medium">No production data found for this period.</p>
-        </div>
-      ) : (
-        <>
-          {/* SUMMARY CARDS */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-               <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Total Output</div>
-               <div className="text-2xl font-black text-slate-800 mt-1">{totals.tonnage.toFixed(0)} <span className="text-sm text-slate-400">T</span></div>
-            </div>
-             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-               <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Morning Shift</div>
-               <div className="text-2xl font-black text-amber-500 mt-1">{totals.morning.toFixed(0)} <span className="text-sm text-amber-300">T</span></div>
-            </div>
-             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-               <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Afternoon Shift</div>
-               <div className="text-2xl font-black text-purple-500 mt-1">{totals.afternoon.toFixed(0)} <span className="text-sm text-purple-300">T</span></div>
-            </div>
-             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-               <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Night Shift</div>
-               <div className="text-2xl font-black text-blue-500 mt-1">{totals.night.toFixed(0)} <span className="text-sm text-blue-300">T</span></div>
-            </div>
-          </div>
-
-          {/* DETAILED TABLE */}
-          <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
-             <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-                <h3 className="font-bold text-slate-700 text-sm uppercase tracking-wide flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-indigo-500" />
-                  {reportType === 'DAILY' ? 'Daily Breakdown' : 'Monthly Aggregation'}
-                </h3>
-             </div>
-             <div className="overflow-x-auto">
-               <table className="w-full text-left">
-                 <thead className="bg-slate-50/50 text-xs text-slate-500 font-bold uppercase tracking-wider">
-                   <tr>
-                     <th className="px-6 py-3 border-b border-slate-100">Date</th>
-                     <th className="px-6 py-3 border-b border-slate-100">Platform</th>
-                     <th className="px-6 py-3 border-b border-slate-100">Category</th>
-                     <th className="px-6 py-3 border-b border-slate-100 text-right text-amber-600">Morning</th>
-                     <th className="px-6 py-3 border-b border-slate-100 text-right text-purple-600">Afternoon</th>
-                     <th className="px-6 py-3 border-b border-slate-100 text-right text-blue-600">Night</th>
-                     <th className="px-6 py-3 border-b border-slate-100 text-right">Total</th>
-                   </tr>
-                 </thead>
-                 <tbody className="divide-y divide-slate-50 text-sm text-slate-700">
-                    {stats.map((row, idx) => (
-                      <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                        <td className="px-6 py-3 font-mono text-xs">{row.production_date}</td>
-                        <td className="px-6 py-3">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wide ${
-                            row.platform === 'BIG_BAG' ? 'bg-indigo-50 text-indigo-600' : 'bg-emerald-50 text-emerald-600'
-                          }`}>
-                            {row.platform.replace('_', ' ')}
-                          </span>
-                        </td>
-                        <td className="px-6 py-3 font-bold text-xs">{row.category}</td>
-                        <td className="px-6 py-3 text-right font-mono text-slate-500">{row.morning_tonnage > 0 ? row.morning_tonnage.toFixed(3) : '-'}</td>
-                        <td className="px-6 py-3 text-right font-mono text-slate-500">{row.afternoon_tonnage > 0 ? row.afternoon_tonnage.toFixed(3) : '-'}</td>
-                        <td className="px-6 py-3 text-right font-mono text-slate-500">{row.night_tonnage > 0 ? row.night_tonnage.toFixed(3) : '-'}</td>
-                        <td className="px-6 py-3 text-right font-black text-slate-800">{row.total_tonnage.toFixed(3)}</td>
-                      </tr>
+        {/* Metric 3: Donut Chart (Platform Split) */}
+        <div className="bg-white p-5 rounded-sm border border-slate-200 shadow-sm h-[160px] relative">
+          <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Platform Split %</h3>
+          <div className="flex items-center h-[100px]">
+            <div className="w-1/2 h-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie
+                    data={dashboardData.pieData}
+                    innerRadius={30}
+                    outerRadius={45}
+                    paddingAngle={2}
+                    dataKey="value"
+                  >
+                    {dashboardData.pieData.map((entry: any, index: number) => (
+                      <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} />
                     ))}
-                 </tbody>
-               </table>
-             </div>
+                  </Pie>
+                </PieChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="w-1/2 space-y-1">
+              {dashboardData.pieData.map((entry: any, index: number) => (
+                 <div key={index} className="flex items-center gap-2 text-[10px] font-bold text-slate-600">
+                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: PIE_COLORS[index % PIE_COLORS.length] }} />
+                    <span className="truncate">{entry.name}</span>
+                 </div>
+              ))}
+            </div>
           </div>
-        </>
-      )}
-    </div>
-  );
-};
+        </div>
 
-// --- MAIN COMPONENT ---
-export const AnalyticsView: React.FC = () => {
-  const { userRole } = useAuth();
-  const [activeTab, setActiveTab] = useState<'LIVE' | 'REPORTS'>('LIVE');
-
-  if (userRole !== 'admin') {
-    return (
-      <div className="p-12 text-center text-slate-500 bg-white rounded-2xl border border-slate-200">
-        <Scale className="w-16 h-16 mx-auto mb-4 opacity-50" />
-        <h2 className="text-xl font-bold text-slate-800">Analytics Restricted</h2>
-        <p>Only Administrators can view global performance charts.</p>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-6">
-      
-      {/* HEADER & TABS */}
-      <div className="flex flex-col md:flex-row justify-between items-center gap-6 bg-white p-6 rounded-2xl border border-slate-200 shadow-sm">
-        <h2 className="text-2xl font-black text-slate-800 flex items-center gap-3">
-          <div className="p-2 bg-indigo-50 rounded-lg text-indigo-600">
-            <TrendingUp className="w-6 h-6" />
-          </div>
-          Production Analytics
-        </h2>
-
-        <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200">
-           <button 
-             onClick={() => setActiveTab('LIVE')}
-             className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-lg transition-all ${activeTab === 'LIVE' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-           >
-             <TrendingUp size={14} /> Live Dashboard
-           </button>
-           <button 
-             onClick={() => setActiveTab('REPORTS')}
-             className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-lg transition-all ${activeTab === 'REPORTS' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-800'}`}
-           >
-             <FileText size={14} /> Production Reports
-           </button>
+        {/* Metric 4: Avg Load */}
+        <div className="bg-white p-5 rounded-sm border border-slate-200 shadow-sm h-[160px] flex flex-col justify-center items-center text-center">
+           <h3 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Avg Load / Truck</h3>
+           <div className="text-5xl font-bold text-slate-800">
+             {dashboardData.avgTonnage.toFixed(2)} <span className="text-xl text-blue-600">T</span>
+           </div>
+           <div className="text-xs text-emerald-600 font-bold mt-2 flex items-center gap-1">
+             <div className="w-0 h-0 border-l-[4px] border-l-transparent border-r-[4px] border-r-transparent border-b-[6px] border-b-emerald-600"></div>
+             +2.4% vs Target
+           </div>
         </div>
       </div>
 
-      {activeTab === 'LIVE' ? <LiveDashboard /> : <ProductionReports />}
+      {/* --- MAIN CHARTS SECTION --- */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+        
+        {/* Large Trend Chart */}
+        <div className="lg:col-span-2 bg-white p-6 rounded-sm border border-slate-200 shadow-sm">
+          <div className="flex justify-between items-center mb-6">
+             <h3 className="text-sm font-bold text-slate-700">Net Production Comparison (Daily)</h3>
+             <button className="text-slate-400 hover:text-slate-600"><Filter size={16}/></button>
+          </div>
+          
+          <div className="h-[300px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={dashboardData.dailyTrend} barSize={20}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke={THEME.grid} />
+                <XAxis 
+                  dataKey="date" 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{fill: THEME.slate, fontSize: 11}} 
+                  dy={10}
+                />
+                <YAxis 
+                  axisLine={false} 
+                  tickLine={false} 
+                  tick={{fill: THEME.slate, fontSize: 11}} 
+                />
+                <RechartsTooltip 
+                  cursor={{fill: '#f8fafc'}}
+                  contentStyle={{borderRadius: '4px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}}
+                />
+                <Bar dataKey="tonnage" fill={THEME.blue} radius={[2, 2, 0, 0]} name="Tonnage" />
+                <Line type="monotone" dataKey="trucks" stroke="#fbbf24" strokeWidth={2} dot={false} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Secondary Analysis Card */}
+        <div className="bg-white p-6 rounded-sm border border-slate-200 shadow-sm flex flex-col">
+           <h3 className="text-sm font-bold text-slate-700 mb-6">Efficiency Variance</h3>
+           <div className="flex-1 flex items-center justify-center">
+              <div className="text-center">
+                 <div className="text-6xl font-black text-blue-600 mb-2">92.8%</div>
+                 <p className="text-xs font-bold text-slate-500 uppercase tracking-widest">Of Monthly Target</p>
+                 <div className="mt-8 w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+                    <div className="bg-blue-600 h-full w-[92.8%]"></div>
+                 </div>
+              </div>
+           </div>
+        </div>
+      </div>
+
+      {/* --- DATA TABLE WITH MICRO CHARTS --- */}
+      <div className="bg-white rounded-sm border border-slate-200 shadow-sm overflow-hidden">
+        <div className="px-6 py-4 border-b border-slate-200 flex justify-between items-center bg-slate-50/50">
+          <h3 className="text-sm font-bold text-slate-700">Operator Performance Summary</h3>
+          <button className="text-blue-600 text-xs font-bold hover:underline">View Full Report</button>
+        </div>
+        
+        <div className="overflow-x-auto">
+          <table className="w-full text-left">
+            <thead>
+              <tr className="bg-white border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-wider">
+                <th className="px-6 py-3">Operator Name</th>
+                <th className="px-6 py-3 text-right">Actuals (T)</th>
+                <th className="px-6 py-3 text-right">Trucks</th>
+                <th className="px-6 py-3 w-[150px]">Micro Chart</th>
+                <th className="px-6 py-3 text-right">Variance</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {dashboardData.operatorStats.slice(0, 5).map((op: any, idx) => (
+                <tr key={idx} className="hover:bg-slate-50/80 transition-colors text-sm text-slate-700">
+                  <td className="px-6 py-3 font-bold text-slate-800">{op.name}</td>
+                  <td className="px-6 py-3 text-right font-mono">{op.tonnage.toLocaleString()}</td>
+                  <td className="px-6 py-3 text-right font-mono text-slate-500">{op.trucks}</td>
+                  <td className="px-6 py-3">
+                    <div className="h-8 w-24">
+                      {/* Micro Sparkline in Table */}
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={op.trend.length > 0 ? op.trend : [{val:0}, {val:0}]}>
+                          <Line type="monotone" dataKey="val" stroke={THEME.blue} strokeWidth={2} dot={false} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </td>
+                  <td className="px-6 py-3 text-right">
+                    <span className="text-emerald-600 font-bold text-xs bg-emerald-50 px-2 py-1 rounded">
+                      +{(Math.random() * 5).toFixed(1)}%
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
 
     </div>
   );

@@ -7,7 +7,6 @@ import { EntryForm } from './components/forms/EntryForm.tsx';
 import { HistoryView } from './components/history/HistoryView.tsx';
 import { AnalyticsView } from './components/analytics/AnalyticsView.tsx';
 import { ProgramView } from './components/history/ProgramView.tsx';
-import { LogisticsMonitor } from './components/analytics/LogisticsMonitor.tsx';
 import { PlatformType, ProductionLog } from './types.ts';
 import { isSupabaseConfigured } from './lib/supabase.ts';
 import { 
@@ -17,13 +16,12 @@ import {
   LayoutDashboard, 
   History, 
   Database, 
-  ArrowLeft,
-  PieChart,
-  Anchor,
-  WifiOff
+  ArrowLeft, 
+  PieChart, 
+  WifiOff 
 } from 'lucide-react';
 
-type ViewState = 'ENTRY' | 'HISTORY' | 'ANALYTICS' | 'PROGRAM' | 'MONITOR';
+type ViewState = 'ENTRY' | 'HISTORY' | 'ANALYTICS' | 'PROGRAM';
 
 // Wrapper Component to handle Auth Logic & Layout
 const AppContent = () => {
@@ -173,7 +171,6 @@ const AppContent = () => {
                 { id: 'ENTRY', label: 'Entry Log', icon: LayoutDashboard, show: userRole !== 'admin' },
                 { id: 'HISTORY', label: 'History', icon: History, show: true },
                 { id: 'PROGRAM', label: 'Schedule', icon: Database, show: true },
-                { id: 'MONITOR', label: 'Logistics Monitor', icon: Anchor, show: userRole === 'admin' },
                 { id: 'ANALYTICS', label: 'Insights', icon: PieChart, show: userRole === 'admin' },
               ].filter(t => t.show).map(tab => (
                 <button
@@ -224,8 +221,6 @@ const AppContent = () => {
                {view === 'ANALYTICS' && <AnalyticsView />}
                
                {view === 'PROGRAM' && <ProgramView />}
-
-               {view === 'MONITOR' && <LogisticsMonitor />}
             </>
           )}
         </div>
@@ -250,12 +245,8 @@ interface ErrorBoundaryState {
   error: Error | null;
 }
 
-// Fixed ErrorBoundary inheritance by using Component directly to ensure 'this.props' is correctly typed within the class instance
 class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  public state: ErrorBoundaryState = {
-    hasError: false,
-    error: null
-  };
+  public state: ErrorBoundaryState = { hasError: false, error: null };
 
   public static getDerivedStateFromError(error: Error): ErrorBoundaryState {
     return { hasError: true, error };
@@ -278,7 +269,7 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
         </div>
       );
     }
-    // Correctly accessing 'this.props' from the Component base class
+    
     return this.props.children;
   }
 }

@@ -12,9 +12,9 @@ import {
   Cell,
   Legend
 } from 'recharts';
-import { ProductionLog } from '../types';
-import { SHIFTS } from '../constants';
-import { formatNumber } from '../utils/calculations';
+import { ProductionLog } from '../types.ts';
+import { SHIFTS } from '../constants.ts';
+import { formatNumber } from '../utils/calculations.ts';
 import { TrendingUp, Scale, Truck, Briefcase } from 'lucide-react';
 
 interface DashboardProps {

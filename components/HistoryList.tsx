@@ -18,9 +18,9 @@ import {
   Pencil,
   Box
 } from 'lucide-react';
-import { ProductionLog } from '../types';
-import { formatNumber } from '../utils/calculations';
-import { SHIFTS } from '../constants';
+import { ProductionLog } from '../types.ts';
+import { formatNumber } from '../utils/calculations.ts';
+import { SHIFTS } from '../constants.ts';
 
 interface HistoryListProps {
   orders: ProductionLog[];

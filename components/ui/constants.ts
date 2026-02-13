@@ -1,3 +1,4 @@
+
 import { OperationCategory, PlatformType, ShiftType } from './types.ts';
 
 // 1. ARTICLE CODES
